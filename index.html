@@ -1,0 +1,270 @@
+<html manifest="cache-manifest">  
+<title>Offline Voicemail</title>
+<script src="js/ribbit.1.6.1.js"></script>
+<script src="js/jquery-1.3.2.min.js"></script>
+<style>
+    body{
+        font-family:Tahoma;
+        background-color:#ddd;
+        
+    }
+</style>
+<body>
+    <table width="100%">
+        <tr>
+            <td ><h2 id="pageTitle">Please login to get your voicemail</h2></td>
+            <td align="right"><h2 id="onlineIndicator"></h2></td>
+        </tr>
+    </table>
+    
+    
+    <div id="login" style="display:none">
+        <table >
+            <tr>
+                <td>&nbsp;</td>
+                <td><a href="login" onclick="getRMUser(); return false;" >login</a></td>
+            </tr>
+        </table>
+    </div>
+     
+    
+    <div id="cache"></div>
+    <div>
+        <table>
+            <tbody id="messageTable" style="display:none">
+            <tbody>
+        </table>
+    <div>
+</body>
+        
+<script>
+    
+    
+    var online = navigator.onLine;
+    checkOnline();
+    document.getElementById("onlineIndicator").innerHTML = online ? "online" : "offline";
+    var pollTimer;
+    Ribbit.logoff();
+   //localStorage.clear();
+    
+    function goOffline(){
+        document.getElementById("onlineIndicator").innerHTML = "offline";
+        online = false;
+        pollTimer.clearTimeout();
+        pollTimer = null;
+    }
+    function goOnline(){
+        document.getElementById("onlineIndicator").innerHTML = "online";
+        online = true;
+        console.log("no ");
+        pollTimer =setTimeout(checkForMessages,1000);
+    }
+    
+    //attempt to handle offline events
+    document.body.addEventListener("offline", goOffline, true);
+    document.body.addEventListener("online", goOnline, true);
+   
+   //but add a timer for it too.
+   setInterval(checkOnline, 1000);
+   function checkOnline(){
+        var b = navigator.onLine;
+        if (b!=online){
+            if (b){
+                goOnline();
+            }
+            else{
+                goOffline();
+            }
+        }
+   }
+
+    
+    if (!localStorage.messages){
+        localStorage.messages = "{}";
+    }
+    var messages = JSON.parse(localStorage.messages);
+    var messagesCount = 0;
+    var uncached=0;
+    var loading = [];
+    
+    
+    function checkForMessages(){
+        document.getElementById("onlineIndicator").innerHTML = "refreshing";
+        Ribbit.Messages().getReceivedMessages(gotMessages)
+    }
+    
+    function gotMessages(result){
+        if (result.hasError ){
+            if (result.message == "The logged in user session has expired. Please log in again"){
+                 document.getElementById("login").setAttribute("style","display:block");
+                 document.getElementById("onlineIndicator").innerHTML = "online";
+            }
+            else{
+                document.getElementById("onlineIndicator").innerHTML = result.message;
+            }
+        }
+        else{
+            if (result.length ==0 && loading){
+                alert("You have no messages");
+            }
+            for (var i in result){
+                message = result[i];
+                if (!messages[message.id] && message.type=="Voicemail"){
+                    if (!message.body){message.body="";}
+                    messages[message.id] = {
+                            id:message.id,
+                            body:message.body,
+                            sender:message.sender,
+                            from:message.from,
+                            mediaUri:message.mediaUri,
+                            time:message.time
+                        };
+                    messagesCount++;
+                    uncached++;
+                    getAudio(messages[message.id]);
+                }
+                else if (message.body && messages[message.id] && !messages[message.id].body){
+                    messages[message.id].body = message.body;
+                    if (!loading){
+                        render(messages[message.id], true);
+                    }
+                }
+                if (messages[message.id] && loading){
+                    loading.push(messages[message.id]);
+                }
+            }
+            if (messagesCount <= 0){cachingDone();}
+        }
+    }
+    
+    function getAudio(message){
+      $.get("messageProxy.php?uri="+escape(Ribbit.getStreamableUrl(message.mediaUri))
+              , function (data){
+            if (!loading){
+                render(message);
+            }
+            localStorage["audio_"+message.id] = data;
+            uncached --;
+            document.getElementById("onlineIndicator").innerHTML = "downloaded - " + (messagesCount - uncached) + " of " + messagesCount;
+            if (uncached == 0){ cachingDone();}
+        });
+    }
+    
+    function cachingDone(){
+        localStorage.messages = JSON.stringify(messages);    
+        document.getElementById("onlineIndicator").innerHTML = "online";
+        if (loading){
+            renderInitial();
+            loading = false;
+            messagesCount = 0;
+        }
+        pollTimer =setTimeout(checkForMessages,30000);
+        
+    }
+    
+    function dateSorter(a,b){
+        return Ribbit.Util.fromXmlDate(a.time).getTime() < Ribbit.Util.fromXmlDate(b.time).getTime();
+    }
+    
+    function renderInitial(){
+        console.log("initial");
+        if (!online){
+            for (var i in messages){
+                loading.push(messages[i]);
+            }
+        }
+        loading = loading.sort(dateSorter);    
+        for (var i = loading.length-1 ; i>=0 ; i--){
+            render(loading[i]);
+        }
+    }
+    
+    
+    function render(message, newTranscription){
+        if (!newTranscription){
+            var row = document.createElement("tr");
+            var cell = document.createElement("td");
+            cell.innerHTML=getLocalTime(message.time);
+            row.appendChild(cell);
+            cell = document.createElement("td");
+            cell.innerHTML=message.sender;
+            row.appendChild(cell);
+            cell = document.createElement("td");
+            cell.innerHTML=message.from ? message.from : "";
+            row.appendChild(cell);
+            cell = document.createElement("td");
+            cell.id="transcription_"+message.id;
+            cell.innerHTML=message.body ? message.body : "";
+            row.appendChild(cell);
+            cell = document.createElement("td");
+            cell.innerHTML="<a href=\"#\" onclick='playAudio(\"" +message.id +"\");return false;'>play</a>";
+            row.appendChild(cell);
+            var table = document.getElementById("messageTable");
+            table.insertBefore(row, table.getElementsByTagName("TR")[0]);
+        }
+        else{
+            document.getElementById("transcription_" +message.id).innerHTML = message.body;
+        }
+        if (!loading){
+            messagesCount --;
+        }
+    }
+    
+    var a= null;
+    
+    function playAudio(id){
+        if (a != null){
+            a.pause();
+        }
+        a = new Audio(localStorage["audio_"+id]);
+        a.play();
+
+    }
+    
+    function getLocalTime(time){
+        var date = new Date((time || "").replace(/-/g,"/").replace(/[TZ]/g," "));
+        date.setTime(date.getTime() - (new Date().getTimezoneOffset() * 60 * 1000));
+        h = date.getUTCHours().toString();
+        m = date.getUTCMinutes().toString();
+        return  (h.length == 1 ?"0":"") + h +  ":" +(m.length == 1 ?"0":"") + m + " " +  date.toDateString();
+    }
+
+
+    function onLogin(e){
+        if (!e.hasError){
+            if (localStorage.messagesUser  && Ribbit.username != localStorage.messagesUser){
+                console.log("different user");
+                localStorage.clear();
+                messages = {};
+            }
+            localStorage.messagesUser = Ribbit.username;
+            document.getElementById("pageTitle").innerHTML = "Voicemail for " + Ribbit.username;
+            document.getElementById("login").setAttribute("style","display:none");
+            document.getElementById("messageTable").setAttribute("style","display:block");
+            if (online){
+                pollTimer = setTimeout(checkForMessages,50);
+            }
+            else{
+                renderInitial();
+                loading = false;
+            }
+        }
+        else{
+            alert("Authentication failed - " + e.message);
+        }
+        
+    }
+    
+    function getRMUser(){
+        Ribbit.init3Legged("YOUR_GUEST_CONSUMER_TOKEN","YOUR_GUEST_SECRET_KEY");
+        Ribbit.getAuthenticatedUserInPopup(onLogin);
+    }
+    
+    if (Ribbit.isLoggedIn){
+        onLogin(true);
+    }
+    else{
+        document.getElementById("login").setAttribute("style","display:block");
+    }
+    
+</script>

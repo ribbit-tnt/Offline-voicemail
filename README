@@ -1,0 +1,3 @@
+This app is a little javascript and php to save ribbit voicemail offline in the browser
+You'll need ribbit mobile guest application keys to make it work.
+As of writing, it only works in modern Chrome and Safari browsers - not firefox due to the need to play mp3 audio
